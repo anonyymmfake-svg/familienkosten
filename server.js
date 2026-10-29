@@ -4,14 +4,15 @@ import {readFile} from 'node:fs/promises';
 import {MongoClient} from 'mongodb';
 import {validate} from './validation.js';
 
-const {MONGODB_URI,FAMILY_PASSWORD,ALLOWED_ORIGIN} = process.env;
+const {MONGODB_URI,FAMILY_PASSWORD,EDIT_PASSWORD,ALLOWED_ORIGIN} = process.env;
 if (!MONGODB_URI || !FAMILY_PASSWORD || FAMILY_PASSWORD.length < 6 || !ALLOWED_ORIGIN) throw Error('MONGODB_URI, FAMILY_PASSWORD (mindestens 6 Zeichen) und ALLOWED_ORIGIN setzen.');
+if (EDIT_PASSWORD && (EDIT_PASSWORD.length < 4 || EDIT_PASSWORD === FAMILY_PASSWORD)) throw Error('EDIT_PASSWORD muss mindestens 4 Zeichen haben und sich vom Lesepasswort unterscheiden.');
 const client = new MongoClient(MONGODB_URI,{serverSelectionTimeoutMS:10000});
 await client.connect();
 const collection = client.db(process.env.MONGODB_DB || 'familienkosten').collection('budgets');
 await collection.updateOne({_id:'family'},{$setOnInsert:{people:[],rows:[],version:0}},{upsert:true});
 const sessions = new Map(), attempts = new Map();
-setInterval(()=>{ const now=Date.now(); for(const [k,v] of sessions) if(v<now) sessions.delete(k); for(const [k,v] of attempts) if(v.until<now) attempts.delete(k); },60000).unref();
+setInterval(()=>{ const now=Date.now(); for(const [k,v] of sessions) if(v.expires<now) sessions.delete(k); for(const [k,v] of attempts) if(v.until<now) attempts.delete(k); },60000).unref();
 const digest = s => createHash('sha256').update(s).digest();
 async function body(req) { let result=''; for await (const chunk of req) { result+=chunk; if(Buffer.byteLength(result)>200000) throw Error('Anfrage zu groß.'); } return JSON.parse(result); }
 const server = http.createServer(async(req,res)=>{
@@ -29,15 +30,21 @@ const server = http.createServer(async(req,res)=>{
       let attempt=attempts.get(ip); if(!attempt || attempt.until<now) {attempt={count:0,until:now+900000}; attempts.set(ip,attempt);}
       if(++attempt.count>20) return send(429,{error:'Zu viele Versuche. Bitte in 15 Minuten erneut versuchen.'});
       const {password}=await body(req);
-      if(typeof password!=='string' || !timingSafeEqual(digest(password),digest(FAMILY_PASSWORD))) return send(401,{error:'Passwort stimmt nicht.'});
-      const token=randomBytes(32).toString('hex'); sessions.set(token,now+28800000); return send(200,{token});
+      if(typeof password!=='string') return send(401,{error:'Passwort stimmt nicht.'});
+      const editor=!!EDIT_PASSWORD && timingSafeEqual(digest(password),digest(EDIT_PASSWORD));
+      const reader=timingSafeEqual(digest(password),digest(FAMILY_PASSWORD));
+      if(!editor && !reader) return send(401,{error:'Passwort stimmt nicht.'});
+      const role=editor?'editor':'reader';
+      const token=randomBytes(32).toString('hex'); sessions.set(token,{expires:now+28800000,role}); return send(200,{token,role});
     }
     if(req.url?.startsWith('/api/')) {
       const token=(req.headers.authorization||'').replace(/^Bearer /,'');
-      if((sessions.get(token)||0)<Date.now()) return send(401,{error:'Bitte erneut anmelden.'});
+      const session=sessions.get(token);
+      if(!session || session.expires<Date.now()) return send(401,{error:'Bitte erneut anmelden.'});
       if(req.url==='/api/logout' && req.method==='POST') {sessions.delete(token);return send(200,{ok:true});}
-      if(req.url==='/api/budget' && req.method==='GET') {const {_id,...data}=await collection.findOne({_id:'family'});return send(200,data);}
+      if(req.url==='/api/budget' && req.method==='GET') {const {_id,...data}=await collection.findOne({_id:'family'});return send(200,{...data,role:session.role});}
       if(req.url==='/api/budget' && req.method==='PUT') {
+        if(session.role!=='editor') return send(403,{error:'Nur Lesezugriff. Zum Bearbeiten mit dem Bearbeitungspasswort anmelden.'});
         const input=await body(req); const data=validate(input);
         if(!Number.isSafeInteger(input.version)||input.version<0) return send(400,{error:'Ungültige Version.'});
         const result=await collection.updateOne({_id:'family',version:input.version},{$set:{...data,updatedAt:new Date().toISOString()},$inc:{version:1}});
