@@ -11,10 +11,16 @@ function totals(){
   document.querySelectorAll('[data-person-total]').forEach(el=>el.textContent=euro(sums[Number(el.dataset.personTotal)]||0));
   document.querySelectorAll('[data-row-total]').forEach(el=>el.textContent=euro(Object.values(state.rows[Number(el.dataset.rowTotal)].amounts).reduce((a,b)=>a+b,0)));
   const end=$('grandTotal');if(end)end.textContent=euro(total);
+  const allocation=$('allocation');
+  if(allocation){
+    allocation.replaceChildren();
+    if(!state.people.length){const hint=document.createElement('p');hint.className='allocation-empty';hint.textContent='Wer gehört dazu? Fügt oben eure erste Person hinzu. Sobald ihr Beträge eintragt, seht ihr hier die Verteilung.';allocation.append(hint);}
+    state.people.forEach((person,i)=>{const row=document.createElement('div');row.className='allocation-row';row.style.setProperty('--person-color',['#7751df','#db8c5e','#8da856','#569eab','#c86f99'][i%5]);const name=document.createElement('span');name.className='allocation-name';name.textContent=person.name;const track=document.createElement('div');track.className='allocation-track';const fill=document.createElement('div');fill.className='allocation-fill';fill.style.width=(total?sums[i]/total*100:0)+'%';track.append(fill);const value=document.createElement('strong');value.textContent=euro(sums[i]);row.append(name,track,value);allocation.append(row);});
+  }
 }
 function button(text,label,fn){const b=document.createElement('button');b.type='button';b.textContent=text;b.className='remove';b.setAttribute('aria-label',label);b.onclick=fn;return b;}
 function cell(row,tag='td'){const el=document.createElement(tag);row.append(el);return el;}
-function nameInput(value,label,onchange){const el=document.createElement('input');el.type='text';el.value=value;el.maxLength=label.startsWith('Name')?60:100;el.setAttribute('aria-label',label);el.onchange=()=>{const v=el.value.trim();if(!v){el.value=value;return;}onchange(v);changed();};return el;}
+function nameInput(value,label,onchange){const el=document.createElement('input');el.type='text';el.value=value;el.maxLength=label.startsWith('Name')?60:100;el.setAttribute('aria-label',label);el.onchange=()=>{const v=el.value.trim();if(!v){el.value=value;return;}onchange(v);changed();totals();};return el;}
 function render(){
   const table=$('budget');table.replaceChildren();
   const head=table.createTHead().insertRow();cell(head,'th').textContent='Kostenart / Hobby';
