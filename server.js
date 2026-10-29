@@ -5,7 +5,7 @@ import {MongoClient} from 'mongodb';
 import {validate} from './validation.js';
 
 const {MONGODB_URI,FAMILY_PASSWORD,ALLOWED_ORIGIN} = process.env;
-if (!MONGODB_URI || !FAMILY_PASSWORD || FAMILY_PASSWORD.length < 16 || !ALLOWED_ORIGIN) throw Error('MONGODB_URI, FAMILY_PASSWORD (mindestens 16 Zeichen) und ALLOWED_ORIGIN setzen.');
+if (!MONGODB_URI || !FAMILY_PASSWORD || FAMILY_PASSWORD.length < 6 || !ALLOWED_ORIGIN) throw Error('MONGODB_URI, FAMILY_PASSWORD (mindestens 6 Zeichen) und ALLOWED_ORIGIN setzen.');
 const client = new MongoClient(MONGODB_URI,{serverSelectionTimeoutMS:10000});
 await client.connect();
 const collection = client.db(process.env.MONGODB_DB || 'familienkosten').collection('budgets');
