@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 const euro = cents => new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR'}).format(cents/100);
-let state={people:[],rows:[],version:0}, token='', demo=false, dirty=false, busy=false;
+let state={people:[],rows:[],version:0}, token=sessionStorage.getItem('familySession')||'', demo=false, dirty=false, busy=false;
 const apiBase=(window.API_URL||'').replace(/\/$/,'');
 function say(text){$('message').textContent=text;}
 function changed(){dirty=true;$('saveStatus').textContent=demo?'Vorschau – Änderungen werden nicht gespeichert.':'Ungespeicherte Änderungen';}
@@ -62,15 +62,15 @@ function render(){
 async function api(path,method='GET',data){
   const response=await fetch(apiBase+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(data?{body:JSON.stringify(data)}:{})});
   let result;try{result=await response.json();}catch{throw Error('Backend nicht erreichbar. Bitte zuerst die API-URL in config.js eintragen.');}
-  if(!response.ok){if(response.status===401 && path!=='/api/login'){token='';$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true;}throw Error(result.error||'Anfrage fehlgeschlagen.');}return result;
+  if(!response.ok){if(response.status===401 && path!=='/api/login'){token='';sessionStorage.removeItem('familySession');$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true;}throw Error(result.error||'Anfrage fehlgeschlagen.');}return result;
 }
 function open(){ $('login').hidden=true;$('workspace').hidden=false;$('logout').hidden=false;$('save').disabled=demo;$('reload').disabled=demo;render(); }
-$('loginForm').onsubmit=async event=>{event.preventDefault();say('');try{const result=await api('/api/login','POST',{password:$('password').value});token=result.token;$('password').value='';state=await api('/api/budget');demo=false;dirty=false;$('saveStatus').textContent='Aus MongoDB geladen';open();}catch(e){say(e.message);}};
+$('loginForm').onsubmit=async event=>{event.preventDefault();say('');try{const result=await api('/api/login','POST',{password:$('password').value});token=result.token;sessionStorage.setItem('familySession',token);$('password').value='';state=await api('/api/budget');demo=false;dirty=false;$('saveStatus').textContent='Aus MongoDB geladen';open();}catch(e){say(e.message);}};
 $('demo').onclick=()=>{demo=true;state={people:[{id:'p1',name:'Person 1'},{id:'p2',name:'Person 2'},{id:'p3',name:'Person 3'}],rows:[{id:'r1',name:'Sportverein',amounts:{p1:2500,p2:1800,p3:1800}},{id:'r2',name:'Musikunterricht',amounts:{p2:6500}},{id:'r3',name:'Handyvertrag',amounts:{p1:1500,p2:999}},{id:'r4',name:'Freizeit & Hobbys',amounts:{p1:3500,p3:2000}}],version:0};say('Beispieldaten – keine Verbindung zu MongoDB.');open();$('saveStatus').textContent='Vorschau – Änderungen werden nicht gespeichert.';};
 $('addPerson').onclick=()=>{if(state.people.length>=30)return say('Maximal 30 Personen.');state.people.push({id:crypto.randomUUID(),name:'Neue Person'});changed();render();};
 $('save').onclick=async()=>{if(demo||busy)return;if(!document.querySelector('#budget').reportValidity?.()) {const invalid=document.querySelector('#budget input:invalid');if(invalid){invalid.reportValidity();return;}}busy=true;$('save').disabled=true;const snapshot=JSON.stringify(state);say('');try{const result=await api('/api/budget','PUT',JSON.parse(snapshot));const unchanged=JSON.stringify(state)===snapshot;state.version=result.version;dirty=!unchanged;$('saveStatus').textContent=unchanged?'In MongoDB gespeichert · '+new Date().toLocaleTimeString('de-DE'):'Weitere Änderungen noch nicht gespeichert';}catch(e){say(e.message);}finally{busy=false;$('save').disabled=false;}};
 $('reload').onclick=async()=>{if(dirty&&!confirm('Ungespeicherte Änderungen verwerfen und gespeicherten Stand laden?'))return;try{state=await api('/api/budget');dirty=false;render();$('saveStatus').textContent='Aktueller Stand geladen';say('');}catch(e){say(e.message);}};
-$('logout').onclick=async()=>{if(dirty&&!confirm('Abmelden und ungespeicherte Änderungen verwerfen?'))return;if(token)try{await api('/api/logout','POST',{});}catch{}token='';state={people:[],rows:[],version:0};dirty=false;demo=false;$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true;$('budget').replaceChildren();say('');};
+$('logout').onclick=async()=>{if(dirty&&!confirm('Abmelden und ungespeicherte Änderungen verwerfen?'))return;if(token)try{await api('/api/logout','POST',{});}catch{}token='';sessionStorage.removeItem('familySession');state={people:[],rows:[],version:0};dirty=false;demo=false;$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true;$('budget').replaceChildren();say('');};
 $('export').onclick=()=>{
   const safe=value=>'"'+String(value).replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
   const rows=[['Person','Tätigkeit / Hobby','Euro pro Monat']];
@@ -81,3 +81,20 @@ $('export').onclick=()=>{
 window.addEventListener('beforeunload',event=>{if(dirty&&!demo){event.preventDefault();event.returnValue='';}});
 
 if(!apiBase && location.hostname.endsWith('github.io')) { $('loginForm').hidden=true; $('login').querySelector('p').textContent='Die MongoDB-Anbindung wird noch eingerichtet. Bis dahin könnt ihr die Tabelle mit Beispieldaten ausprobieren.'; }
+
+// Restore the existing server session without storing the family password.
+async function restoreSession(){
+  if(!token)return;
+  const submit=$('loginForm').querySelector('button');
+  submit.disabled=true;
+  $('loginForm').hidden=true;
+  say('Gespeicherte Anmeldung wird geprüft …');
+  try{
+    state=await api('/api/budget');demo=false;dirty=false;
+    $('saveStatus').textContent='Aus MongoDB geladen';open();say('');
+  }catch(e){
+    $('loginForm').hidden=false;
+    say(e.message);
+  }finally{submit.disabled=false;}
+}
+restoreSession();
