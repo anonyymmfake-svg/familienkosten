@@ -1,40 +1,29 @@
-# Familienkosten
+# Wortweise – Vokabeltrainer
 
-Eigenständiges Projekt für GitHub Pages: Personen als Spalten, Kostenarten als Zeilen, monatliche Euro-Beträge, Summen je Person und Familie, Jahreshochrechnung und CSV-Export. Responsive Oberfläche mit interaktiver Beispielvorschau. Änderungen werden explizit gespeichert.
+Deutsch–Englisch-Vokabeln eintragen, nach Lektionen ordnen und in zufälliger Reihenfolge lernen. Abfrage Deutsch → Englisch, Englisch → Deutsch oder beide Richtungen gemischt. Antworten werden eingegeben; mehrere richtige Übersetzungen mit Semikolon trennen. Groß-/Kleinschreibung und äußere Leerzeichen werden ignoriert. Falsche und aufgedeckte Wörter lassen sich am Rundenende wiederholen.
 
-## Architektur
+## Speicherung und Synchronisierung
 
-`GitHub Pages (public/) → Node-API → MongoDB Atlas`
+GitHub Pages (`public/`) → bestehende Node-API auf Render → MongoDB Atlas.
 
-Die MongoDB-Unterstützung in `anonyymmfake-svg/kairo` verwendet die Umgebungsvariable `MONGODB_URI`. Dieses Projekt verwendet denselben Variablennamen und kann auf denselben Cluster zugreifen. Es verwendet ausdrücklich die separate Datenbank `familienkosten`, Collection `budgets`. Ob Kairo tatsächlich eine URI im Hosting gesetzt hat, ist nicht aus dem Repository ersichtlich. Der Bot und seine Collections werden nicht verändert.
+Das bisherige Passwort bleibt gültig. `FAMILY_PASSWORD` erlaubt Lernen und – sofern kein `EDIT_PASSWORD` gesetzt ist – Bearbeiten. Wenn `EDIT_PASSWORD` gesetzt ist, ermöglicht nur dieses Passwort Änderungen. Alle angemeldeten Geräte verwenden dieselbe Sammlung. Änderungen explizit mit **Änderungen speichern** sichern; auf einem anderen Gerät **Stand neu laden** verwenden. Eine Versionsprüfung verhindert stilles Überschreiben bei parallelen Änderungen. Bei einem Konflikt zuerst eine JSON-Sicherung exportieren, dann den aktuellen Serverstand laden und gewünschte Änderungen übernehmen. Die Sicherung enthält alle Einträge und kann bei Bedarf manuell wieder eingetragen werden.
 
-## 1. Eigenes GitHub-Repository
+Vokabeln liegen in der separaten Collection `vocabulary`, Dokument `shared`, innerhalb von `MONGODB_DB` (bestehender Standard: `familienkosten`). Vorhandene Kostendaten in `budgets` werden nicht verändert. Sitzungen laufen nach acht Stunden ab und verfallen beim Backend-Neustart. Keine Passwörter oder Datenbankzugangsdaten in Browsercode oder GitHub hinterlegen.
 
-Neues Repository `familienkosten` erstellen. Den Inhalt dieses Ordners in dessen Hauptverzeichnis hochladen. Keine `.env` oder Zugangsdaten hochladen.
+## Deployment
 
-## 2. Backend einrichten
+Der bestehende GitHub-Actions-Workflow veröffentlicht `public/` bei einem Push auf `main`. Der bisherige Render-Service muss ebenfalls den aktuellen `main`-Stand aus diesem Repository bereitstellen (bei deaktiviertem Auto-Deploy einmal manuell deployen). Es sind keine neuen Umgebungsvariablen erforderlich:
 
-Beispiel: auf Render einen Blueprint aus dem neuen Repository erstellen (`render.yaml`). Vor dem Anlegen eventuelle Kosten im Hosting prüfen. Erforderliche Servervariablen:
+- `MONGODB_URI`: bestehender Atlas-Zugang mit Zugriff auf die Collection `vocabulary`.
+- `MONGODB_DB`: bestehende Datenbank, standardmäßig `familienkosten`.
+- `FAMILY_PASSWORD`: bestehendes Passwort.
+- `EDIT_PASSWORD`: optionales, abweichendes Bearbeitungspasswort.
+- `ALLOWED_ORIGIN`: `https://anonyymmfake-svg.github.io`.
 
-- `MONGODB_URI`: URI aus den Server-Einstellungen von Kairo übernehmen, sofern vorhanden. Nicht in GitHub oder Browser-Code eintragen. Empfohlen: auf demselben Cluster ein eigener MongoDB-Benutzer mit Schreib-/Leserechten ausschließlich auf `familienkosten`.
-- `MONGODB_DB`: `familienkosten`.
-- `FAMILY_PASSWORD`: ein starkes Familienpasswort mit mindestens 16 Zeichen.
-- `ALLOWED_ORIGIN`: `https://anonyymmfake-svg.github.io` (ohne Repository-Pfad und abschließenden Slash).
-
-Der MongoDB-Benutzer benötigt Zugriff auf die neue Datenbank. Die Atlas-Netzwerkfreigabe muss den Backend-Host zulassen. Zugangsdaten nicht im Chat veröffentlichen. Backend ausschließlich per HTTPS verwenden. Sitzungen sind acht Stunden gültig, werden nur im Arbeitsspeicher gehalten und verfallen bei Server-Neustarts. Login ist auf 20 Versuche je 15 Minuten und direkter Verbindungs-IP begrenzt; hinter einem gemeinsam genutzten Proxy gilt das gegebenenfalls für alle Besucher zusammen. Das gemeinsame Familienpasswort ist für einen einzelnen Haushalt gedacht, ohne individuelle Nutzerkonten.
-
-## 3. GitHub Pages aktivieren
-
-In `public/config.js` die HTTPS-URL des Backends als `window.API_URL` eintragen. In GitHub **Settings → Pages → Source → GitHub Actions** auswählen. Der Workflow veröffentlicht ausschließlich `public/`. Je nach GitHub-Tarif ist für Pages ein öffentliches Repository erforderlich; darin dürfen nur Quellcode und Konfiguration ohne Secrets stehen. Die Familiendaten werden von der API erst nach Anmeldung herausgegeben.
-
-Erwartete URL nach erfolgreichem Deployment: `https://anonyymmfake-svg.github.io/familienkosten/`. Diese URL ist erst nach tatsächlich erfolgreicher Einrichtung verfügbar.
+`public/config.js` verweist weiterhin auf `https://familienkosten.onrender.com`. Frontend: `https://anonyymmfake-svg.github.io/familienkosten/`.
 
 ## Lokal
 
-Node.js 22 oder neuer installieren. `npm install`, `.env.example` nach `.env` kopieren und ausfüllen. Für lokale Nutzung `ALLOWED_ORIGIN=http://localhost:3000` setzen; `npm start`. Browser auf `http://localhost:3000` öffnen. Leere `window.API_URL` nutzt dieselbe Domain. Die Beispielvorschau lässt sich auch über einen beliebigen lokalen statischen Server ohne MongoDB testen.
+Node.js 22 oder neuer. Abhängigkeiten mit `npm install` installieren. Servervariablen über `.env` setzen, `ALLOWED_ORIGIN=http://localhost:3000`, und `public/config.js` lokal auf `window.API_URL = ''` stellen. Mit `npm start` starten.
 
-`npm test` prüft die Datenvalidierung. Beträge liegen ganzzahlig in Cent vor. Eine Versionsnummer verhindert, dass zwei Geräte stillschweigend Änderungen überschreiben. Bei Konflikten kann der ungespeicherte Stand zunächst per CSV exportiert und anschließend der aktuelle Stand geladen werden. Bei Datenbankfehlern gibt es keinen stillen lokalen Speicherersatz.
-
-## Stand
-
-Quellcode und Deployment-Konfiguration vorbereitet. GitHub-Repository, Live-Backend und Datenbankverbindung müssen noch eingerichtet beziehungsweise mit realen Server-Secrets verbunden werden. Es wurden keine Zugangsdaten aus Kairo kopiert.
+`node --test` prüft die bisherigen Kostenvalidatoren und die neuen Vokabeleingaben. `node --check server.js` und `node --check public/app.js` prüfen die Syntax.

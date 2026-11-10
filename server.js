@@ -3,6 +3,7 @@ import {randomBytes, timingSafeEqual, createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {MongoClient} from 'mongodb';
 import {validate} from './validation.js';
+import {validateVocabulary} from './vocabulary.js';
 
 const {MONGODB_URI,FAMILY_PASSWORD,EDIT_PASSWORD,ALLOWED_ORIGIN} = process.env;
 if (!MONGODB_URI || !FAMILY_PASSWORD || FAMILY_PASSWORD.length < 6 || !ALLOWED_ORIGIN) throw Error('MONGODB_URI, FAMILY_PASSWORD (mindestens 6 Zeichen) und ALLOWED_ORIGIN setzen.');
@@ -11,10 +12,12 @@ const client = new MongoClient(MONGODB_URI,{serverSelectionTimeoutMS:10000});
 await client.connect();
 const collection = client.db(process.env.MONGODB_DB || 'familienkosten').collection('budgets');
 await collection.updateOne({_id:'family'},{$setOnInsert:{people:[],rows:[],version:0}},{upsert:true});
+const vocabulary = client.db(process.env.MONGODB_DB || 'familienkosten').collection('vocabulary');
+await vocabulary.updateOne({_id:'shared'},{$setOnInsert:{words:[],version:0}},{upsert:true});
 const sessions = new Map(), attempts = new Map();
 setInterval(()=>{ const now=Date.now(); for(const [k,v] of sessions) if(v.expires<now) sessions.delete(k); for(const [k,v] of attempts) if(v.until<now) attempts.delete(k); },60000).unref();
 const digest = s => createHash('sha256').update(s).digest();
-async function body(req) { let result=''; for await (const chunk of req) { result+=chunk; if(Buffer.byteLength(result)>200000) throw Error('Anfrage zu groß.'); } return JSON.parse(result); }
+async function body(req) { let result=''; for await (const chunk of req) { result+=chunk; if(Buffer.byteLength(result)>12000000) throw Error('Anfrage zu groß.'); } return JSON.parse(result); }
 const server = http.createServer(async(req,res)=>{
   const origin=req.headers.origin;
   res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');
@@ -42,6 +45,18 @@ const server = http.createServer(async(req,res)=>{
       const session=sessions.get(token);
       if(!session || session.expires<Date.now()) return send(401,{error:'Bitte erneut anmelden.'});
       if(req.url==='/api/logout' && req.method==='POST') {sessions.delete(token);return send(200,{ok:true});}
+      if(req.url==='/api/vocabulary' && req.method==='GET') {
+        const {_id,...data}=await vocabulary.findOne({_id:'shared'});
+        return send(200,{...data,canEdit:session.role==='editor'||!EDIT_PASSWORD});
+      }
+      if(req.url==='/api/vocabulary' && req.method==='PUT') {
+        if(EDIT_PASSWORD && session.role!=='editor') return send(403,{error:'Zum Bearbeiten mit dem Bearbeitungspasswort anmelden.'});
+        const input=await body(req), data=validateVocabulary(input);
+        if(!Number.isSafeInteger(input.version)||input.version<0) return send(400,{error:'Ungültige Version.'});
+        const result=await vocabulary.updateOne({_id:'shared',version:input.version},{$set:{...data,updatedAt:new Date().toISOString()},$inc:{version:1}});
+        if(!result.matchedCount) return send(409,{error:'Auf einem anderen Gerät wurde gespeichert. Exportiere deine Änderungen als Sicherung und lade dann den aktuellen Stand.'});
+        return send(200,{version:input.version+1});
+      }
       if(req.url==='/api/budget' && req.method==='GET') {const {_id,...data}=await collection.findOne({_id:'family'});return send(200,{...data,role:session.role});}
       if(req.url==='/api/budget' && req.method==='PUT') {
         if(session.role!=='editor') return send(403,{error:'Nur Lesezugriff. Zum Bearbeiten mit dem Bearbeitungspasswort anmelden.'});
